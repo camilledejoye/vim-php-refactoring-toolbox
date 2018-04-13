@@ -7,6 +7,9 @@ use I\Am\Usefull as Lover;
 
 class Playground
 {
+    const PUBLIC_CONST = 'public constant';
+    protected const PROTECTED_CONST = 'protected constant';
+
     private $renameMe = 10;
     private static $static = 'private static';
 
@@ -19,6 +22,16 @@ class Playground
         $renameMe = 'renameMe will be renamed';
         $renameMeAlso = $renameMe;
         $this->renameMe = 'I will be renamed in the next test';
+    }
+
+    /**
+     * Place your cursor on a constant and press <Leader>rcc
+     * to rename a constant (class constant)
+     */
+    public function testRenameConstant()
+    {
+        self::PUBLIC_CONST;
+        static::PUBLIC_CONST;
     }
 
     /**

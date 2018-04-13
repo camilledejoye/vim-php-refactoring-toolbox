@@ -59,6 +59,7 @@ endif
 if g:vim_php_refactoring_use_default_mapping == 1
     nnoremap <unique> <Leader>rlv :call PhpRenameLocalVariable()<CR>
     nnoremap <unique> <Leader>rcv :call PhpRenameClassVariable()<CR>
+    nnoremap <unique> <Leader>rcc :call PhpRenameClassConstant()<CR>
     nnoremap <unique> <Leader>eu :call PhpExtractUse()<CR>
     nnoremap <unique> <Leader>rm :call PhpRenameMethod()<CR>
     vnoremap <unique> <Leader>ec :call PhpExtractConst()<CR>
@@ -192,6 +193,22 @@ endfunction
 function! PhpRenameClassVariable() " {{{
     let l:pattern = '\C\%(\%(\%(public\|protected\|private\|static\)\_s\+\)\+\$\|$this->\|self::\$\|static::\$\)\@<='
     let l:oldName = substitute(expand('<cword>'), '^\$*', '', '')
+    let l:newName = inputdialog('Rename ' . l:oldName . ' to: ')
+    if g:vim_php_refactoring_auto_validate_rename == 0
+        if s:PhpSearchInCurrentClass(l:pattern . l:newName . '\>', 'n') > 0
+            call s:PhpEchoError(l:newName . ' seems to already exist in the current class. Rename anyway ?')
+            if inputlist(["0. No", "1. Yes"]) == 0
+                return
+            endif
+        endif
+    endif
+    call s:PhpReplaceInCurrentClass(l:pattern . l:oldName . '\>', l:newName)
+endfunction
+" }}}
+
+function! PhpRenameClassConstant() " {{{
+    let l:pattern = '\%(\%(\%(public\|protected\|private\)\s\+\)\?const\s\+\|\%(self\|static\)::\)\zs'
+    let l:oldName = expand('<cword>')
     let l:newName = inputdialog('Rename ' . l:oldName . ' to: ')
     if g:vim_php_refactoring_auto_validate_rename == 0
         if s:PhpSearchInCurrentClass(l:pattern . l:newName . '\>', 'n') > 0
