@@ -57,11 +57,12 @@ endif
 
 " Refactoring mapping {{{
 if g:vim_php_refactoring_use_default_mapping == 1
+    nnoremap <unique> <Leader>pr :call PhpRename()<CR>
     nnoremap <unique> <Leader>rlv :call PhpRenameLocalVariable()<CR>
     nnoremap <unique> <Leader>rcv :call PhpRenameClassVariable()<CR>
     nnoremap <unique> <Leader>rcc :call PhpRenameClassConstant()<CR>
-    nnoremap <unique> <Leader>eu :call PhpExtractUse()<CR>
     nnoremap <unique> <Leader>rm :call PhpRenameMethod()<CR>
+    nnoremap <unique> <Leader>eu :call PhpExtractUse()<CR>
     vnoremap <unique> <Leader>ec :call PhpExtractConst()<CR>
     nnoremap <unique> <Leader>ep :call PhpExtractClassProperty()<CR>
     vnoremap <unique> <Leader>em :call PhpExtractMethod()<CR>
@@ -103,6 +104,14 @@ let s:php_regex_cn          = '[_A-Za-z0-9]\+'
 " Fluent {{{
 let s:php_fluent_this = "normal! jo\<CR>return $this;"
 " }}}
+
+" Enum of the different types of expression
+let s:t_variable  = 0
+let s:t_function  = 1
+let s:t_method    = 2
+let s:t_attribute = 3
+let s:t_constant  = 4
+let s:t_unknown   = -1
 
 function! PhpDocAll() " {{{
     if exists("*" . g:vim_php_refactoring_phpdoc) == 0
@@ -172,6 +181,24 @@ function! PhpCreateSettersAndGetters() " {{{
             call s:PhpInsertMethod("public", "get" . l:camelCaseName, [], "return $this->" . l:property . ";\n")
         endif
     endfor
+endfunction
+" }}}
+
+function! PhpRename() " {{{
+    let l:type = s:PhpIdentityExpressionType('.', expand('<cword>'))
+
+    if l:type == s:t_method
+      call PhpRenameMethod()
+    elseif l:type == s:t_attribute
+      call PhpRenameClassVariable()
+    elseif l:type == s:t_constant
+      call PhpRenameClassConstant()
+    elseif l:type == s:t_function
+      " TODO
+      "call PhpRenameFunction()
+    elseif l:type == s:t_variable
+      call PhpRenameLocalVariable()
+    endif
 endfunction
 " }}}
 
@@ -583,6 +610,34 @@ function! s:PhpInsertFluent() " {{{
         endif
     else
         echoerr 'Invalid option for g:vim_php_refactoring_make_setter_fluent'
+    endif
+endfunction
+" }}}
+
+function! s:PhpIdentityExpressionType(line, word) " {{{
+    let l:line = getline(a:line)
+
+    " Names things to be clearer
+    let l:visibility = '%(public|protected|private)\s+'
+    let l:static = 'static\s+'
+    let l:method_declaration = l:visibility . '%(' . l:static . ')?function\s+'
+    let l:method_usage = '%(\$this-\>|self::|static::)'
+    let l:attribute_declaration = l:visibility . '%('. l:static . ')?\$'
+    let l:attribute_usage = '%(\$this-\>|self::\$|static::\$)'
+    let l:constant_declaration = l:visibility . 'const\s+'
+    let l:constant_usage = '%(self::|static::)'
+
+    if l:line =~ '\v%(' . l:method_declaration . '|' . l:method_usage . ')' . a:word . '\s*\(' " a method
+      return s:t_method
+    elseif l:line =~ '\v%(' . l:attribute_declaration . '|' . l:attribute_usage . ')' . a:word . '>' " an attribute
+      return s:t_attribute
+    elseif l:line =~ '\v%(' . l:constant_declaration . '|' . l:constant_usage . ')' . a:word . '>' " a constant
+      return s:t_constant
+    elseif l:line =~ '\vfunction\s+' . a:word . '\s*\('
+      return s:t_function
+    elseif l:line =~ '\v\$' . a:word . '>'
+      return s:t_variable
+    else return s:t_unknown
     endif
 endfunction
 " }}}
