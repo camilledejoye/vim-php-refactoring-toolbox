@@ -102,7 +102,7 @@ let s:php_regex_cn          = '[_A-Za-z0-9]\+'
 " }}}
 
 " Fluent {{{
-let s:php_fluent_this = "normal! jo\<CR>return $this;"
+let s:php_fluent_this = "keepjumps normal! jo\<CR>return $this;"
 " }}}
 
 " Enum of the different types of expression
@@ -120,15 +120,15 @@ function! PhpDocAll() " {{{
         call s:PhpEchoError(g:vim_php_refactoring_phpdoc . '() vim function doesn''t exists.')
         return
     endif
-    normal! magg
+    keepjumps normal! gg
     while search(s:php_regex_class_line, 'eW') > 0
         call s:PhpDocument()
     endwhile
-    normal! gg
+    keepjumps normal! gg
     while search(s:php_regex_member_line, 'eW') > 0
         call s:PhpDocument()
     endwhile
-    normal! gg
+    keepjumps normal! gg
     while search(s:php_regex_func_line, 'eW') > 0
         call s:PhpDocument()
     endwhile
@@ -138,7 +138,7 @@ endfunction
 " }}}
 
 function! PhpCreateGetters() " {{{
-    normal! gg
+    keepjumps normal! gg
     let l:properties = []
     while search(s:php_regex_member_line, 'eW') > 0
         normal! w"xye
@@ -160,7 +160,7 @@ endfunction
 " }}}
 
 function! PhpCreateSettersAndGetters() " {{{
-    normal! gg
+    keepjumps normal! gg
     let l:properties = []
     while search(s:php_regex_member_line, 'eW') > 0
         normal! w"xye
@@ -322,7 +322,7 @@ function! PhpExtractMethod() range " {{{
     call search('(', 'W')
     normal! "pyi(
     call search('{', 'W')
-    exec "normal! %"
+    exec "keepjumps normal! %"
     let l:stopLine = line('.')
     let l:beforeExtract = join(getline(l:startLine, l:middleLine-1))
     let l:afterExtract  = join(getline(l:middleLine, l:stopLine))
@@ -377,7 +377,7 @@ endfunction
 function! PhpDetectUnusedUseStatements() " {{{
     call s:SaveView()
 
-    normal! gg
+    keepjumps normal! gg
     while search('^use', 'W')
         let l:startLine = line('.')
         call search(';\_s*', 'eW')
@@ -438,7 +438,7 @@ function! s:PhpReplaceInCurrentFunction(search, replace) " {{{
     call search(s:php_regex_func_line, 'bW')
     let l:startLine = line('.')
     call search('{', 'W')
-    exec "normal! %"
+    exec "keepjumps normal! %"
     let l:stopLine = line('.')
     exec l:startLine . ',' . l:stopLine . ':s/' . a:search . '/'. a:replace .'/ge'
 
@@ -466,7 +466,7 @@ function! s:PhpReplaceInCurrentClass(search, replace) " {{{
     call search(s:php_regex_class_line, 'beW')
     call search('{', 'W')
     let l:startLine = line('.')
-    exec "normal! %"
+    exec "keepjumps normal! %"
     let l:stopLine = line('.')
     exec l:startLine . ',' . l:stopLine . ':s/' . a:search . '/'. a:replace .'/ge'
 
@@ -535,7 +535,7 @@ endfunction
 function! s:PhpInsertMethod(modifiers, name, params, impl) " {{{
     call search(s:php_regex_func_line, 'beW')
     call search('{', 'W')
-    exec "normal! %"
+    exec "keepjumps normal! %"
     exec "normal! o\<CR>" . a:modifiers . " function " . a:name . "(" . join(a:params, ", ") . ")\<CR>{\<CR>" . a:impl . "}\<Esc>=a{"
 endfunction
 " }}}
@@ -573,7 +573,7 @@ function! s:PhpSearchInCurrentFunction(pattern, flags) " {{{
     call search(s:php_regex_func_line, 'bW')
     let l:startLine = line('.')
     call search('{', 'W')
-    exec "normal! %"
+    exec "keepjumps normal! %"
     let l:stopLine = line('.')
 
     call s:ResetView()
@@ -587,7 +587,7 @@ function! s:PhpSearchInCurrentClass(pattern, flags) " {{{
     call search(s:php_regex_class_line, 'beW')
     call search('{', 'W')
     let l:startLine = line('.')
-    exec "normal! %"
+    exec "keepjumps normal! %"
     let l:stopLine = line('.')
 
     call s:ResetView()
