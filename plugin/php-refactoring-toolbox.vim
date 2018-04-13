@@ -114,6 +114,8 @@ let s:t_constant  = 4
 let s:t_unknown   = -1
 
 function! PhpDocAll() " {{{
+    call s:SaveView()
+
     if exists("*" . g:vim_php_refactoring_phpdoc) == 0
         call s:PhpEchoError(g:vim_php_refactoring_phpdoc . '() vim function doesn''t exists.')
         return
@@ -130,7 +132,8 @@ function! PhpDocAll() " {{{
     while search(s:php_regex_func_line, 'eW') > 0
         call s:PhpDocument()
     endwhile
-    normal! `a
+
+    call s:ResetView()
 endfunction
 " }}}
 
@@ -242,7 +245,8 @@ endfunction
 " }}}
 
 function! PhpExtractUse() " {{{
-    normal! mr
+    call s:SaveView()
+
     let l:fqcn = s:PhpGetFQCNUnderCursor()
     let l:use  = s:PhpGetDefaultUse(l:fqcn)
     let l:defaultUse = l:use
@@ -257,7 +261,8 @@ function! PhpExtractUse() " {{{
     else
         call s:PhpInsertUseStatement(l:fqcn)
     endif
-    normal! `r
+
+    call s:ResetView()
 endfunction
 " }}}
 
@@ -266,16 +271,20 @@ function! PhpExtractConst() " {{{
         call s:PhpEchoError('Extract constant only works in Visual mode, not in Visual Line or Visual block')
         return
     endif
+    call s:SaveView()
+
     let l:name = toupper(inputdialog("Name of new const: "))
-    normal! mrgv"xy
+    normal! gv"xy
     call s:PhpReplaceInCurrentClass('\V' . escape(@x, '\\/'), 'self::' . l:name)
     call s:PhpInsertConst(l:name, @x)
-    normal! `r
+
+    call s:ResetView()
 endfunction
 " }}}
 
 function! PhpExtractClassProperty() " {{{
-    normal! mr
+    call s:SaveView()
+
     let l:name = substitute(expand('<cword>'), '^\$*', '', '')
     call s:PhpReplaceInCurrentFunction('$' . l:name . '\>', '$this->' . l:name)
     if g:vim_php_refactoring_auto_validate_visibility == 0
@@ -287,7 +296,8 @@ function! PhpExtractClassProperty() " {{{
         let l:visibility =  g:vim_php_refactoring_default_property_visibility
     endif
     call s:PhpInsertProperty(l:name, l:visibility)
-    normal! `r
+
+    call s:ResetView()
 endfunction
 " }}}
 
@@ -305,7 +315,7 @@ function! PhpExtractMethod() range " {{{
     else
         let l:visibility =  g:vim_php_refactoring_default_method_visibility
     endif
-    normal! gv"xdmr
+    normal! gv"xd
     let l:middleLine = line('.')
     call search(s:php_regex_func_line, 'bW')
     let l:startLine = line('.')
@@ -332,7 +342,8 @@ function! PhpExtractMethod() range " {{{
             call add(l:output, l:var)
         endif
     endfor
-    normal! `r
+    call s:SaveView()
+
     if len(l:output) == 0
         exec "normal! O$this->" . l:name . "(" . join(l:parameters, ", ") . ");\<ESC>k=3="
         let l:return = ''
@@ -344,7 +355,8 @@ function! PhpExtractMethod() range " {{{
         let l:return = "return array(" . join(l:output, ", ") . ");\<CR>"
     endif
     call s:PhpInsertMethod(l:visibility, l:name, l:parametersSignature, @x . l:return)
-    normal! `r
+
+    call s:ResetView()
 endfunction
 " }}}
 
@@ -363,7 +375,9 @@ endfunction
 " }}}
 
 function! PhpDetectUnusedUseStatements() " {{{
-    normal! mrgg
+    call s:SaveView()
+
+    normal! gg
     while search('^use', 'W')
         let l:startLine = line('.')
         call search(';\_s*', 'eW')
@@ -377,7 +391,8 @@ function! PhpDetectUnusedUseStatements() " {{{
             endif
         endfor
     endwhile
-    normal! `r
+
+    call s:ResetView()
 endfunction
 " }}}
 
@@ -412,22 +427,22 @@ endfunction
 
 function! s:PhpDocument() " {{{
     if match(getline(line('.')-1), "*/") == -1
-        normal! mr
         exec "call " . g:vim_php_refactoring_phpdoc . '()'
-        normal! `r
     endif
 endfunction
 " }}}
 
 function! s:PhpReplaceInCurrentFunction(search, replace) " {{{
-    normal! mr
+    call s:SaveView()
+
     call search(s:php_regex_func_line, 'bW')
     let l:startLine = line('.')
     call search('{', 'W')
     exec "normal! %"
     let l:stopLine = line('.')
     exec l:startLine . ',' . l:stopLine . ':s/' . a:search . '/'. a:replace .'/ge'
-    normal! `r
+
+    call s:ResetView()
 endfunction
 " }}}
 
@@ -446,14 +461,16 @@ endfunction
 " }}}
 
 function! s:PhpReplaceInCurrentClass(search, replace) " {{{
-    normal! mr
+    call s:SaveView()
+
     call search(s:php_regex_class_line, 'beW')
     call search('{', 'W')
     let l:startLine = line('.')
     exec "normal! %"
     let l:stopLine = line('.')
     exec l:startLine . ',' . l:stopLine . ':s/' . a:search . '/'. a:replace .'/ge'
-    normal! `r
+
+    call s:ResetView()
 endfunction
 " }}}
 
@@ -551,25 +568,29 @@ endfunction
 " }}}
 
 function! s:PhpSearchInCurrentFunction(pattern, flags) " {{{
-    normal! mr
+    call s:SaveView()
+
     call search(s:php_regex_func_line, 'bW')
     let l:startLine = line('.')
     call search('{', 'W')
     exec "normal! %"
     let l:stopLine = line('.')
-    normal! `r
+
+    call s:ResetView()
     return s:PhpSearchInRange(a:pattern, a:flags, l:startLine, l:stopLine)
 endfunction
 " }}}
 
 function! s:PhpSearchInCurrentClass(pattern, flags) " {{{
-    normal! mr
+    call s:SaveView()
+
     call search(s:php_regex_class_line, 'beW')
     call search('{', 'W')
     let l:startLine = line('.')
     exec "normal! %"
     let l:stopLine = line('.')
-    normal! `r
+
+    call s:ResetView()
     return s:PhpSearchInRange(a:pattern, a:flags, l:startLine, l:stopLine)
 endfunction
 " }}}
@@ -638,6 +659,18 @@ function! s:PhpIdentityExpressionType(line, word) " {{{
     elseif l:line =~ '\v\$' . a:word . '>'
       return s:t_variable
     else return s:t_unknown
+    endif
+endfunction
+" }}}
+
+function! s:SaveView() " {{{
+  let s:saved_view = winsaveview()
+endfunction
+" }}}
+
+function! s:ResetView() " {{{
+    if exists('s:saved_view')
+        call winrestview(s:saved_view)
     endif
 endfunction
 " }}}
