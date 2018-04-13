@@ -8,6 +8,7 @@ use I\Am\Usefull as Lover;
 class Playground
 {
     private $renameMe = 10;
+    private static $static = 'private static';
 
     /**
      * Place your cursor on a local variable and press <Leader>rlv
@@ -28,6 +29,8 @@ class Playground
     {
         $this->renameMe = 'RenameMe rename every usage of this property in the current class';
         $renameMe = 'I\'m not renamed';
+        self::$static = 'Rename a static attribute';
+        static::$static = 'Rename a static attribute';
     }
 
     /**
