@@ -56,6 +56,19 @@ class Playground
     }
 
     /**
+     * Place your cursor anywhere on the first line and press <Leader>pi
+     * to inline it (php inline)
+     */
+    public function testInlining()
+    {
+        $test = 'Inline me';
+
+        if ($test) {
+            // Do something
+        }
+    }
+
+    /**
      * Place your cursor on a Fully qualified class name and press <Leader>eu
      * to create an alias and place the new Use statement on top of the file
      */

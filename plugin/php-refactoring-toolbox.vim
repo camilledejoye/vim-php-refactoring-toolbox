@@ -58,6 +58,7 @@ endif
 " Refactoring mapping {{{
 if g:vim_php_refactoring_use_default_mapping == 1
     nnoremap <unique> <Leader>pr :call PhpRename()<CR>
+    nnoremap <unique> <Leader>pi :call PhpInline()<CR>
     nnoremap <unique> <Leader>rlv :call PhpRenameLocalVariable()<CR>
     nnoremap <unique> <Leader>rcv :call PhpRenameClassVariable()<CR>
     nnoremap <unique> <Leader>rcc :call PhpRenameClassConstant()<CR>
@@ -422,6 +423,29 @@ function! PhpAlignAssigns() range " {{{
         let l:newline = substitute(l:oldline,l:expr,l:formatter,"")
         call setline(l:line,l:newline)
     endfor
+endfunction
+" }}}
+
+" Inlines an assignation
+function! PhpInline() " {{{
+    let l:matches = matchlist(getline('.'), '\v^\s*\$(\w+)>\s*\=\s*(.+);$')
+    if empty(l:matches)
+        return
+    endif
+
+    call s:SaveView()
+    " If the next line is empty and the previous one is either ending with {
+    " (new bloc) or empty as well, then we delete the next line too
+    let l:previous_line = getline(line('.') - 1)
+    if getline(line('.') + 1) =~ '^\s*$' &&
+          \ (l:previous_line =~ '{\s*$' || l:previous_line =~ '^\s*$')
+        delete _ 2
+    else
+        delete _
+    endif
+
+    call s:PhpReplaceInCurrentFunction('\v\$' . l:matches[1]. '>', l:matches[2])
+    call s:ResetView()
 endfunction
 " }}}
 
