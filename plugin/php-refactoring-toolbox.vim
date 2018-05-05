@@ -536,7 +536,6 @@ function! s:PhpInsertProperty(name, visibility) " {{{
             call search('{', 'W')
             call s:PhpInsertPropertyExtended(a:name, a:visibility, line('.'), 0)
         else
-            call search(';', 'W')
             call s:PhpInsertPropertyExtended(a:name, a:visibility, line('.'), 1)
         endif
     else
