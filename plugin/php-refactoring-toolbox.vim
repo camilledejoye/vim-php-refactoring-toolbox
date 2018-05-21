@@ -7,6 +7,453 @@
 " Version: 1.0.3
 "
 
+let s:exception = {
+    \ 'abort': 'Interrupt',
+\}
+
+let s:context = {
+    \ 'scope':     {'start': 0, 'end': 0},
+    \ 'class':     {'start': 0, 'end': 0},
+    \ 'function':  {'start': 0, 'end': 0, 'docblock': 0},
+    \ 'selection': {'start': 0, 'end': 0, 'text': ''},
+\}
+
+function! PhpTest() range " {{{
+    try
+        call s:SaveView()
+
+        let s:context.class           = s:FindClassPositions(line('.'))
+        let s:context.function        = s:PhpFindFunctionOrMethodPositions(line('.'))
+        let s:context.scope           = s:FindScopePositions(line('.'))
+        let s:context.selection.start = a:firstline
+        let s:context.selection.end   = a:lastline
+        let s:context.selection.text  = s:GetSelectedText()
+
+        " Creates an "origin" mark for where the user was
+        normal! mo
+
+        " Creates an "extract" mark for where the extract method should be put
+        let l:extract_linenr = s:context.function.start ? s:context.function.end : line('$')
+        execute l:extract_linenr 'mark e'
+
+        let l:new_name         = s:AskNewFunctionOrMethodName()
+        let l:arguments        = s:PhpExtractAguments()
+        let l:return_variables = s:PhpExtractReturnVariables()
+
+        call s:ReplaceSelectionByFunctionOrMethodCall(l:new_name, l:arguments, l:return_variables)
+        call s:InsertExtractedFunctionOrMethod(l:new_name, l:arguments, l:return_variables)
+
+    catch /^\(Vim:\)\?Interrupt$/
+        " Do nothing, the user abort the operation
+    finally
+        call s:ResetView()
+    endtry
+endfunction " }}}
+
+function! s:ReplaceSelectionByFunctionOrMethodCall(name, arguments, return_variables) " {{{
+    let l:function_statement = s:GenerateFunctionOrMethodCall(a:name, a:arguments, a:return_variables)
+    let l:pattern            = escape(s:Trim(s:context.selection.text), '\.*$^~[')
+    let l:pattern            = substitute(l:pattern, '\_s\+', '\\_s\\+', 'g')
+    let l:range = s:context.class.start
+        \ ? s:context.class.start . ',' . s:context.class.end
+        \ : s:context.scope.start . ',' . s:context.scope.end
+
+    execute l:range . 's/' . l:pattern . '/' . l:function_statement . '/e'
+endfunction " }}}
+
+function! s:InsertExtractedFunctionOrMethod(name, arguments, return_variables) " {{{
+    let l:implementation = s:GenerateFunctionOrMethodImplementation(a:name, a:arguments, a:return_variables)
+
+    call phprefactor#registers#save('=')
+    execute line("'e") 'put =nr2char(10) . l:implementation'
+    execute line("'e") + 2 'mark e'
+    call phprefactor#registers#restore('=')
+    normal! ='[
+endfunction " }}}
+
+function! s:GenerateFunctionOrMethodCall(name, arguments, return_variables) " {{{
+    let l:name = (s:context.class.start ? '$this->' : '') .  a:name
+
+    let l:variables        = map(copy(a:arguments), '"$" . v:val.name')
+    let l:arguments_string = join(l:variables, ', ')
+
+    let l:number_of_return_variables = len(a:return_variables)
+    if 0 == l:number_of_return_variables
+        let l:return_string = ''
+    elseif 1 == l:number_of_return_variables
+        let l:return_string = '$' . a:return_variables[0].name . ' = '
+    else
+        let l:returns       = map(copy(a:return_variables), '"$" . v:val.name')
+        let l:return_string = printf('list(%s) = ' . join(l:returns, ', '))
+    endif
+
+    return printf('%s%s(%s);', l:return_string, l:name, l:arguments_string)
+endfunction " }}}
+
+function! s:GenerateFunctionOrMethodImplementation(name, arguments, return_variables) " {{{
+    let l:function = 'function'
+
+    if s:context.class.start
+        let l:function = 'public ' . l:function
+    endif
+
+    let l:return_string = s:FormatReturnVariables(a:return_variables)
+
+    return printf(
+        \ "%s %s(%s)\n{\n%s%s\n}",
+        \ l:function,
+        \ a:name,
+        \ join(s:FormatArguments(a:arguments), ', '),
+        \ s:context.selection.text,
+        \ !empty(l:return_string) ? "\n" . l:return_string : ''
+    \)
+endfunction " }}}
+
+function! s:FormatArguments(arguments) " {{{
+    let l:formated_arguments = []
+    for l:argument in a:arguments
+        let l:formated_argument  = l:argument.nullable ? '?' : ''
+        let l:formated_argument .= l:argument.type ? l:argument.type . ' ' : ''
+        let l:formated_argument .= l:argument.reference ? '&' : ''
+        let l:formated_argument .= '$' . l:argument.name
+
+        call add(l:formated_arguments, l:formated_argument)
+    endfor
+
+    return l:formated_arguments
+endfunction " }}}
+
+function! s:FormatReturnVariables(variables) " {{{
+    let l:number_of_return_variables = len(a:variables)
+
+    if 0 == l:number_of_return_variables
+        let l:return = ''
+    else
+        let l:return = 'return '
+
+        if 1 == l:number_of_return_variables
+            let l:return .= '$' . a:variables[0].name
+        else
+            let l:variables  = map(copy(a:variables), '"$" . v:val.name')
+            let l:return    .= printf('array(%s)', join(l:variables, ', '))
+        endif
+
+        let l:return .= ';'
+    endif
+
+    return l:return
+endfunction " }}}
+
+function! s:PhpExtractAguments() " {{{
+    let l:before_selection   = join(getline(s:context.scope.start, s:context.selection.start - 1), "\n")
+    let l:function_arguments = s:GetFunctionOrMethodArguments(getline(s:context.function.start))
+
+    let l:arguments = []
+    for l:variable in s:PhpMatchAllStr(s:context.selection.text, s:php_regex_local_var_2)
+        let l:variable = l:variable[1:] " Removes the $ sign
+
+        if exists('l:function[l:variable]')
+            call add(l:arguments, l:function_arguments[l:variable])
+        elseif match(l:before_selection, '\$\<' . l:variable . '\>') > 0
+            call add(l:arguments, s:CreateArgument(l:variable))
+        endif
+    endfor
+
+    return l:arguments
+endfunction " }}}
+
+function! s:PhpExtractReturnVariables() " {{{
+    let l:after_selection = join(getline(s:context.selection.end + 1, s:context.scope.end), "\n")
+
+    let l:return_variables = []
+    for l:variable in s:PhpMatchAllStr(s:context.selection.text, s:php_regex_local_var_2)
+        let l:variable = l:variable[1:] " Removes the $ sign
+
+        if -1 != match(l:after_selection, '\$\<' . l:variable . '\>')
+            call add(l:return_variables, s:CreateArgument(l:variable))
+        endif
+    endfor
+
+    return l:return_variables
+endfunction " }}}
+
+function! s:CreateArgument(name, ...) " {{{
+    return {
+        \ 'type':      get(a:000, 0, ''),
+        \ 'nullable':  get(a:000, 1, ''),
+        \ 'reference': get(a:000, 2, ''),
+        \ 'name':      a:name,
+    \}
+endfunction " }}}
+
+function! s:GetFunctionOrMethodArguments(declaration) " {{{
+    let l:oneline_declaration = substitute(a:declaration,  '\_s\+', ' ', 'ge')
+    let l:arguments_string    = substitute(l:oneline_declaration, '.*(\s*\(.*\)\s*)', '\1', 'e')
+
+    let l:arguments = {}
+    for l:argument in split(l:arguments_string, '\s*,\s*')
+        let l:parts = matchlist(l:argument, s:php_regex_argument)
+        echomsg l:argument
+        echomsg string(l:parts)
+        let l:arguments[l:parts[4]] = s:CreateArgument(l:parts[4], l:parts[2], l:parts[1], l:parts[3])
+    endfor
+
+    return l:arguments
+endfunction " }}}
+
+function! s:FindScopePositions(linenr) " {{{
+    if s:context.function.start
+        return s:context.function
+    elseif s:context.class.start
+        return s:context.class
+    else
+        return {'start': 1, 'end': search(s:php_regex_func_line, 'nW')}
+    endif
+endfunction " }}}
+
+function! s:PhpFindFunctionOrMethodPositions(linenr) " {{{
+    let l:positions = {'start': 0, 'end': 0, 'docblock': 0}
+    let l:start     = s:PhpFindFunctionOrMethodStart(a:linenr)
+
+    if !l:start " There is no function declaration before the line
+        return l:positions
+    endif
+
+    let l:end = s:PhpFindFunctionOrMethodEnd(l:start)
+
+    " If false then the line is not inside a function
+    if l:start <= a:linenr && a:linenr <= l:end
+        let l:positions.start    = l:start
+        let l:positions.end      = l:end
+        let l:positions.docblock = s:PhpFindDocblock(l:start)
+    endif
+
+    return l:positions
+endfunction " }}}
+
+function! s:PhpFindFunctionOrMethodStart(linenr) " {{{
+    let l:start = a:linenr
+
+    while getline(l:start) !~ s:php_regex_func_line
+        let l:start -= 1
+
+        if 0 == l:start
+            return 0
+        endif
+    endwhile
+
+    return l:start
+endfunction " }}}
+
+function! s:PhpFindFunctionOrMethodEnd(start) " {{{
+    let l:curpos_save = s:SaveCurpos()
+
+    call cursor(a:start, 1)
+    " Do not use ]M, it does not work for procedural functions
+    normal! ]m%
+
+    let l:end = line('.')
+
+    call cursor(l:curpos_save)
+
+    return l:end
+endfunction " }}}
+
+function! s:PhpFindDocblock(linenr) " {{{
+    for l:start in range(a:linenr, 1, -1)
+        let l:line = getline(l:start)
+
+        if empty(s:Trim(l:line)) || l:line =~ '^\s*\*'
+            continue
+        endif
+
+        if l:line =~ s:php_regex_docblock_start
+            return l:start
+        endif
+
+        return 0
+    endfor
+
+    return 0
+endfunction " }}}
+
+function! s:AskNewFunctionOrMethodName() " {{{
+    if s:context.class.start " Not in a class
+        return s:AskNewMethodName()
+    endif
+
+    return s:AskNewFunctionName()
+endfunction " }}}
+
+function! s:AskNewFunctionName() " {{{
+    let l:name = s:InputDialog('Name of the new function: ')
+
+    if empty(l:name)
+        throw s:exception.abort
+    endif
+
+    if !s:CheckIfNewNameAlreadyExists('^\s*function\s\+\<' . l:name . '\>')
+        throw s:exception.abort
+    endif
+
+    return l:name
+endfunction " }}}
+
+function! s:AskNewMethodName() " {{{
+    let l:name = s:InputDialog('Name of the new method: ')
+
+    if empty(l:name)
+        throw s:exception.abort
+    endif
+
+    if !s:CheckIfNewNameAlreadyExists(
+        \ s:php_regex_func_line . '\<' . l:name . '\>',
+        \ s:context.class.start,
+        \ s:context.class.end
+    \)
+        throw s:exception.abort
+    endif
+
+    return l:name
+endfunction " }}}
+
+function! s:AskAboutVisibility() " {{{
+    if 0 != g:vim_php_refactoring_auto_validate_visibility
+        return g:vim_php_refactoring_default_method_visibility
+    endif
+
+    let l:visibilities = {
+        \ 0: g:vim_php_refactoring_default_method_visibility,
+        \ 1: 'public',
+        \ 2: 'protected',
+        \ 3: 'private',
+        \ 4: ''
+    \}
+
+    let l:index = inputlist([
+        \ 'Visibility (default is ' . g:vim_php_refactoring_default_method_visibility . ')',
+        \ '1. public', '2. protected', '3. private', '4. none'
+    \])
+
+    if !has_key(l:visibilities, l:index)
+        call s:PhpEchoError('Invalid choice')
+        return AskAboutVisibility()
+    endif
+
+    return l:visibilities[l:index]
+endfunction " }}}
+
+function! s:FindClassPositions(linenr) " {{{
+    try
+        let l:positions   = {'start': 0, 'end': 0}
+        let l:curpos_save = s:SaveCurpos()
+
+        if 0 != search(s:php_regex_class_line, 'bW')
+            let l:positions.start = line('.')
+
+            call search('{', 'W')
+            exec "keepjumps normal! %"
+
+            let l:positions.end = line('.')
+        endif
+    finally
+        call cursor(l:curpos_save)
+    endtry
+
+    return l:positions
+endfunction " }}}
+
+function! s:InputDialog(message) " {{{
+    return s:Trim(inputdialog(a:message))
+endfunction " }}}
+
+function! s:CheckIfNewNameAlreadyExists(pattern, ...) " {{{
+    let l:end = exists('a:1') ? a:1 : 0
+    let l:end   = exists('a:2') ? a:2 : line('$')
+
+    if s:PhpSearchInRange(a:pattern, 'n', l:end, l:end)
+        call s:PhpEchoError(l:newName . ' seems to already exist. Rename anyway ?')
+        if 1 != inputlist(['0. No', '1. Yes'])
+            return v:false
+        endif
+    endif
+
+    return v:true
+endfunction " }}}
+
+function! s:SaveCurpos() " {{{
+    let l:curpos = getcurpos()
+    call remove(l:curpos, 0)
+
+    return l:curpos
+endfunction " }}}
+
+if !hasmapto('PhpTest')
+    vnoremap <unique> <Leader>tt :call PhpTest()<CR>
+endif
+
+function! s:GetParametersForExtractedCode(selection, selection_strat, selection_end) " {{{
+    call phprefactor#registers#save('p')
+
+    let l:parameters = {}
+
+    try
+        keepjumps normal! [[f("pyi(
+        let l:startLine = line('.')
+        " Do not use ]M directly because it does not work for functions
+        keepjumps normal! ]m%
+        let l:stopLine = line('.')
+
+        let l:beforeExtract = join(getline(l:startLine, a:selection_start - 1))
+        let l:afterExtract  = join(getline(a:selection_end + 1, l:stopLine))
+
+        for l:var in s:PhpMatchAllStr(a:selection, s:php_regex_local_var)
+            " Don't bother with a complex regexp, the previous line already did it
+            let l:var_pattern = substitute(l:var, '$\(.\+\)', '$\\<\1\\>', '')
+
+            if match(l:beforeExtract, l:var_pattern) > 0
+                let l:parameters[l:var]['in'] = 1
+
+                l:type_pattern = '\(' . s:php_regex_type . '\)'        " Capture the type
+                    \ . '\%(\(' . s:php_regex_reference . '\)\|\s\+\)' " Capture the '&' if present
+                    \ . l:var_pattern                                  " For the current variable
+                let l:matches = matchlist(@p, l:type_pattern)
+
+                if !empty(l:matches) " The function argument provides additional information
+                    let l:parameters[l:var]['type'] = l:matches[1]
+                    let l:parameters[l:var]['ref']  = !empty(l:matches[2])
+                endif
+            endif
+            if match(l:afterExtract, l:var_pattern) > 0
+                let l:parameters[l:var]['out'] = 1
+            endif
+        endfor
+    endtry
+
+    call phprefactor#registers#restore('p')
+    return l:parameters
+endfunction
+" }}}
+
+function! s:GetSelectedText() " {{{
+    call phprefactor#registers#save('"')
+
+    " Reselect the selection and copy it to the unnamed register (")
+    normal! gvy
+
+    let l:selection = @"
+
+    call phprefactor#registers#restore('"')
+
+    return l:selection
+endfunction
+" }}}
+
+function! s:Trim(str) " {{{
+    return substitute(a:str, '^\_s*\(.\{-\}\)\_s*$', '\1', '')
+endfunction
+" }}}
+
 if exists('g:vim_php_refactoring_loaded')
     finish
 endif
@@ -88,18 +535,25 @@ endif
 " +--------------------------------------------------------------+
 
 " Regex defintion {{{
-let s:php_regex_phptag_line = '<?\%(php\)\?'
-let s:php_regex_ns_line     = '^namespace\_s\+[\\_A-Za-z0-9]*\_s*[;{]'
-let s:php_regex_use_line    = '^use\_s\+[\\_A-Za-z0-9]\+\%(\_s\+as\_s\+[_A-Za-z0-9]\+\)\?\_s*\%(,\_s\+[\\_A-Za-z0-9]\+\%(\_s\+as\_s\+[_A-Za-z0-9]\+\)\?\_s*\)*;'
-let s:php_regex_class_line  = '^\%(\%(final\s\+\|abstract\s\+\)\?class\>\|trait\>\)'
-let s:php_regex_const_line  = '^\s*const\s\+[^;]\+;'
-let s:php_regex_member_line = '^\s*\%(\%(private\|protected\|public\|static\)\s*\)\+\$'
-let s:php_regex_func_line   = '^\s*\%(\%(private\|protected\|public\|static\|abstract\)\s*\)*function\_s\+'
+let s:php_regex_word           = '[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*'
+let s:php_regex_type           = '\%(\%(\(?\)\s*\)\?\([\\a-zA-Z_\x7f-\xff][\\a-zA-Z0-9_\x7f-\xff]*\)\)\?\%(\s*\(&\)\s*\)\?'
+let s:php_regex_local_var_2    = '\$\(\%(this->\)\@!' . s:php_regex_word . '\)'
+let s:php_regex_argument       = s:php_regex_type . s:php_regex_local_var_2
+let s:php_regex_reference      = '\%(\s\+&\|&\s\+\|\s\+&\s\+\)'
 
-let s:php_regex_local_var   = '\$\<\%(this\>\)\@![A-Za-z0-9]*'
-let s:php_regex_assignment  = '+=\|-=\|*=\|/=\|=\~\|!=\|='
-let s:php_regex_fqcn        = '[\\_A-Za-z0-9]*'
-let s:php_regex_cn          = '[_A-Za-z0-9]\+'
+let s:php_regex_phptag_line    = '<?\%(php\)\?'
+let s:php_regex_ns_line        = '^namespace\_s\+[\\_A-Za-z0-9]*\_s*[;{]'
+let s:php_regex_use_line       = '^use\_s\+[\\_A-Za-z0-9]\+\%(\_s\+as\_s\+[_A-Za-z0-9]\+\)\?\_s*\%(,\_s\+[\\_A-Za-z0-9]\+\%(\_s\+as\_s\+[_A-Za-z0-9]\+\)\?\_s*\)*;'
+let s:php_regex_class_line     = '^\%(\%(final\s\+\|abstract\s\+\)\?class\>\|trait\>\)'
+let s:php_regex_const_line     = '^\s*const\s\+[^;]\+;'
+let s:php_regex_member_line    = '^\s*\%(\%(private\|protected\|public\|static\)\s*\)\+\$'
+let s:php_regex_func_line      = '^\s*\%(\%(private\|protected\|public\|static\|abstract\)\s\+\)*function\_s\+'
+let s:php_regex_docblock_start = '^\s*\/\*\*'
+
+let s:php_regex_local_var      = '\$\<\%(this\>\)\@![A-Za-z0-9]*'
+let s:php_regex_assignment     = '+=\|-=\|*=\|/=\|=\~\|!=\|='
+let s:php_regex_fqcn           = '[\\_A-Za-z0-9]*'
+let s:php_regex_cn             = '[_A-Za-z0-9]\+'
 " }}}
 
 " Fluent {{{
@@ -426,8 +880,7 @@ function! PhpAlignAssigns() range " {{{
 endfunction
 " }}}
 
-" Inlines an assignation
-function! PhpInline() " {{{
+function! PhpInline() " Inlines an assignation {{{
     let l:matches = matchlist(getline('.'), '\v^\s*\$(\w+)>\s*\=\s*(.+);$')
     if empty(l:matches)
         return
@@ -697,3 +1150,5 @@ function! s:ResetView() " {{{
     endif
 endfunction
 " }}}
+
+" vim: ts=4 sw=4 et fdm=marker
